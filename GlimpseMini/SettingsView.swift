@@ -30,28 +30,33 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            Picker("Units", selection: $mmol) {
-                Text("mg/dl").tag(false)
-                Text("mmol/L").tag(true)
+            HStack {
+                Text("Units")
+                Spacer()
+                Picker("Units", selection: $mmol) {
+                    Text("mg/dl").tag(false)
+                    Text("mmol/L").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
-            .pickerStyle(.segmented)
 
-            Text("Sign in using your Dexcom username and password. Dexcom share must be enabled with at least one follower.")
-                .fixedSize(horizontal: false, vertical: true)
-                .foregroundStyle(.secondary)
-                .padding(.vertical)
+            HStack {
+                Text("Account location")
+                Spacer()
+                Picker("Account location", selection: $accountLocation) {
+                    ForEach(locations) {
+                        Text($0.displayName).tag($0)
+                    }
+                }
+                .labelsHidden()
+            }
 
             TextField("Username", text: $username)
                 .textFieldStyle(.roundedBorder)
 
             SecureField("Password", text: $password)
                 .textFieldStyle(.roundedBorder)
-
-            Picker("Account location", selection: $accountLocation) {
-                ForEach(locations) {
-                    Text($0.displayName).tag($0)
-                }
-            }
 
             Button("Sign In") {
                 Keychain.standard[.usernameKey] = username
@@ -64,6 +69,12 @@ struct SettingsView: View {
             }
             .disabled(username.isEmpty || password.isEmpty)
             .frame(maxWidth: .infinity, alignment: .trailing)
+
+            Text("Sign in using your Dexcom username and password. **Dexcom share must be enabled with at least one follower**, but sign in using **your own Dexcom credentials**, not the followers. If your username is a phone number, format it with a + and the area code, for example +12223334444.")
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.secondary)
+                .padding(.vertical)
+                .font(.footnote)
         }
         .padding()
         .frame(width: 300)
@@ -78,9 +89,9 @@ extension AccountLocation: Identifiable {
         case .usa:
             "United States"
         case .apac:
-            "Asia-Pacific"
+            "Japan"
         case .worldwide:
-            "Europe"
+            "Anywhere Else"
         }
     }
 }

@@ -24,9 +24,9 @@ import KeychainAccess
     private(set) var reading: State = .initial
     private(set) var message: String?
 
-    private(set) var username: String? = Keychain.standard[.usernameKey]
-    private(set) var password: String? = Keychain.standard[.passwordKey]
-    private(set) var location: String? = UserDefaults.standard.string(forKey: .locationKey)
+    @ObservationIgnored private(set) var username: String? = Keychain.standard[.usernameKey]
+    @ObservationIgnored private(set) var password: String? = Keychain.standard[.passwordKey]
+    @ObservationIgnored private(set) var location: String? = UserDefaults.standard.string(forKey: .locationKey)
 
     private var client: DexcomClient?
     private let decoder = JSONDecoder()
@@ -80,9 +80,6 @@ import KeychainAccess
                     } else {
                         reading = .noRecentReading
                     }
-                } catch let error as DexcomError {
-                    // Could be too many attempts; stop auto refreshing.
-                    reading = .error(error)
                 } catch {
                     reading = .error(error)
                 }
@@ -95,9 +92,9 @@ import KeychainAccess
                 case .initial:
                     return nil
                 case .loaded(let reading):
-                    // 5:10 after the last reading.
-                    let fiveMinuteRefresh = 60 * 5 + reading.date.timeIntervalSinceNow + 10
-                    // Refresh 5:10 after reading, then every 10s.
+                    // 5:05 after the last reading.
+                    let fiveMinuteRefresh = 60 * 5 + reading.date.timeIntervalSinceNow + 5
+                    // Refresh 5:05 after reading, then every 10s.
                     return max(10, fiveMinuteRefresh)
                 case .noRecentReading:
                     return 10
@@ -116,11 +113,13 @@ import KeychainAccess
 
                 print("Scheduling refresh in \(refreshTime / 60) minutes")
                 
-                Timer.scheduledTimer(withTimeInterval: refreshTime, repeats: false) { [weak self] _ in
+                let timer = Timer.scheduledTimer(withTimeInterval: refreshTime, repeats: false) { [weak self] _ in
                     DispatchQueue.main.async { [weak self] in
                         self?.beginRefreshing()
                     }
                 }
+
+                timer.tolerance = 5
             }
         }
     }

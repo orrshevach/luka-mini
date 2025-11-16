@@ -80,10 +80,8 @@ struct DexcomMenuApp: App {
                         reading.trend.image
                         Text(value)
                     }
-                case .noRecentReading:
+                case .noRecentReading, .error:
                     Image(systemName: "icloud.slash")
-                case .error:
-                    Image(systemName: "wifi.slash")
                 }
             } else {
                 Text("Luka")
