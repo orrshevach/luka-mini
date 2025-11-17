@@ -22,7 +22,7 @@ struct LukaMiniApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("Luka", id: .settingsWindow) {
+        Window("Luka Mini", id: .settingsWindow) {
             SettingsView(didLogIn: model.logIn)
         }
         .windowResizability(.contentSize)
@@ -34,15 +34,19 @@ struct LukaMiniApp: App {
                 Divider()
             }
 
-            Toggle("Open at Login", isOn: $loginHelper.isEnabled)
-
             if model.isLoggedIn {
-                Button("Manually Refresh") {
+                Button("Refresh Now", systemImage: "arrow.clockwise") {
                     model.beginRefreshing()
                 }
             }
 
-            Button {
+            Divider()
+
+            Toggle(isOn: $loginHelper.isEnabled) {
+                Label("Launch at Login", systemImage: "power")
+            }
+
+            Button(model.isLoggedIn ? "Settings" : "Log In", systemImage: model.isLoggedIn ? "gear" : "person") {
                 openWindow(id: .settingsWindow)
 
                 for window in NSApplication.shared.windows {
@@ -50,24 +54,14 @@ struct LukaMiniApp: App {
                         window.level = .floating
                     }
                 }
-            } label: {
-                Text(model.isLoggedIn ? "Settings" : "Log In")
-            }.keyboardShortcut(",")
+            }
+            .keyboardShortcut(",")
 
             Divider()
 
-            Button("Quit") {
+            Button("Quit", systemImage: "xmark.rectangle") {
                 NSApplication.shared.terminate(nil)
             }.keyboardShortcut("q")
-
-            #if DEBUG
-            Divider()
-
-            Button("Reset Keychain") {
-                Keychain.standard[.usernameKey] = nil
-                Keychain.standard[.passwordKey] = nil
-            }
-            #endif
         } label: {
             if model.isLoggedIn {
                 switch model.reading {
