@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  DexcomMenu
+//  LukaMini
 //
 //  Created by Kyle Bashour on 4/11/24.
 //

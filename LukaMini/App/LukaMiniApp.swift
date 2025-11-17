@@ -1,6 +1,6 @@
 //
-//  DexcomMenuApp.swift
-//  DexcomMenu
+//  LukaMiniApp.swift
+//  LukaMini
 //
 //  Created by Kyle Bashour on 4/11/24.
 //
@@ -10,7 +10,7 @@ import Dexcom
 import KeychainAccess
 
 @main
-struct DexcomMenuApp: App {
+struct LukaMiniApp: App {
     @AppStorage(.useMMOLKey) private var useMMOL = false
     @AppStorage(.locationKey) private var location: String?
 
