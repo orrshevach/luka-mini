@@ -81,7 +81,7 @@ struct SettingsView: View {
     }
 }
 
-extension AccountLocation: Identifiable {
+extension AccountLocation: @retroactive Identifiable {
     public var id: Self { self }
 
     var displayName: String {
