@@ -80,17 +80,14 @@ import KeychainAccess
                         duration: .init(value: 3, unit: .hours)
                     ).sorted { $0.date < $1.date }
 
-                    print("Fetched \(allReadings.count) readings")
+                    readings = allReadings.toLiveActivityReadings()
 
-                    if let current = allReadings.last {
+                    if let current = allReadings.last, current.date.timeIntervalSinceNow > -60 * 10 {
                         reading = .loaded(current)
-                        readings = allReadings.toLiveActivityReadings()
                     } else {
                         reading = .noRecentReading
-                        readings = []
                     }
                 } catch {
-                    print("Error fetching readings: \(error)")
                     reading = .error(error)
                 }
             }
