@@ -23,6 +23,7 @@ import KeychainAccess
 
     private(set) var reading: State = .initial
     private(set) var message: String?
+    private(set) var readings: [LiveActivityState.Reading] = []
 
     @ObservationIgnored private(set) var username: String? = Keychain.standard[.usernameKey]
     @ObservationIgnored private(set) var password: String? = Keychain.standard[.passwordKey]
@@ -75,12 +76,21 @@ import KeychainAccess
                 print("Refreshing reading")
 
                 do {
-                    if let current = try await client.getCurrentGlucoseReading() {
+                    let allReadings = try await client.getGlucoseReadings(
+                        duration: .init(value: 3, unit: .hours)
+                    ).sorted { $0.date < $1.date }
+
+                    print("Fetched \(allReadings.count) readings")
+
+                    if let current = allReadings.last {
                         reading = .loaded(current)
+                        readings = allReadings.toLiveActivityReadings()
                     } else {
                         reading = .noRecentReading
+                        readings = []
                     }
                 } catch {
+                    print("Error fetching readings: \(error)")
                     reading = .error(error)
                 }
             }

@@ -18,9 +18,8 @@ struct SettingsView: View {
         .string(forKey: .locationKey)
         .flatMap { AccountLocation(rawValue: $0) } ?? .usa
 
-    @Environment(\.dismissWindow) private var dismissWindow
-
     var didLogIn: (String, String, AccountLocation) -> Void
+    var dismiss: () -> Void
 
     private let locations: [AccountLocation] = [
         .usa,
@@ -65,7 +64,7 @@ struct SettingsView: View {
 
                 didLogIn(username, password, accountLocation)
 
-                dismissWindow(id: .settingsWindow)
+                dismiss()
             }
             .disabled(username.isEmpty || password.isEmpty)
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -97,5 +96,5 @@ extension AccountLocation: @retroactive Identifiable {
 }
 
 #Preview {
-    SettingsView(didLogIn: {_, _, _ in})
+    SettingsView(didLogIn: {_, _, _ in}, dismiss: {})
 }

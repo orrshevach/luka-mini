@@ -6,107 +6,14 @@
 //
 
 import SwiftUI
-import Dexcom
-import KeychainAccess
 
 @main
 struct LukaMiniApp: App {
-    @AppStorage(.useMMOLKey) private var useMMOL = false
-    @AppStorage(.locationKey) private var location: String?
-
-    @State private var loginHelper = LoginItemHelper()
-    @State private var model = ViewModel()
-    
-    @Environment(\.openWindow) private var openWindow
-    
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("Luka Mini", id: .settingsWindow) {
-            SettingsView(didLogIn: model.logIn)
-        }
-        .windowResizability(.contentSize)
-        .defaultSize(width: 300, height: 0)
-
-        MenuBarExtra {
-            if let timestamp = model.message {
-                Text(timestamp)
-                Divider()
-            }
-
-            if model.isLoggedIn {
-                Button("Refresh Now", systemImage: "arrow.clockwise") {
-                    model.beginRefreshing()
-                }
-            }
-
-            Divider()
-
-            Toggle(isOn: $loginHelper.isEnabled) {
-                Label("Launch at Login", systemImage: "power")
-            }
-
-            Button(model.isLoggedIn ? "Settings" : "Log In", systemImage: model.isLoggedIn ? "gear" : "person") {
-                openWindow(id: .settingsWindow)
-
-                for window in NSApplication.shared.windows {
-                    if window.identifier?.rawValue == .settingsWindow {
-                        window.level = .floating
-                    }
-                }
-            }
-            .keyboardShortcut(",")
-
-            Divider()
-
-            Button("Quit", systemImage: "xmark.rectangle") {
-                NSApplication.shared.terminate(nil)
-            }.keyboardShortcut("q")
-        } label: {
-            if model.isLoggedIn {
-                switch model.reading {
-                case .initial:
-                    Text("--")
-                case .loaded(let reading):
-                    let value = reading.value.formatted(.glucose(useMMOL ? .mmolL : .mgdl))
-
-                    HStack {
-                        reading.trend.image
-                        Text(value)
-                    }
-                case .noRecentReading, .error:
-                    Image(systemName: "icloud.slash")
-                }
-            } else {
-                Text("Luka")
-            }
-        }
-    }
-}
-
-extension TrendDirection {
-    var image: Image? {
-        switch self {
-        case .none:
-            nil
-        case .doubleUp:
-            Image("arrow.up.double")
-        case .singleUp:
-            Image(systemName: "arrow.up")
-        case .fortyFiveUp:
-            Image(systemName: "arrow.up.right")
-        case .flat:
-            Image(systemName: "arrow.right")
-        case .fortyFiveDown:
-            Image(systemName: "arrow.down.right")
-        case .singleDown:
-            Image(systemName: "arrow.down")
-        case .doubleDown:
-            Image("arrow.down.double")
-        case .notComputable:
-            Image(systemName: "questionmark")
-        case .rateOutOfRange:
-            Image(systemName: "exclamationmark")
+        Settings {
+            EmptyView()
         }
     }
 }
