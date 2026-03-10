@@ -38,6 +38,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name: UserDefaults.didChangeNotification,
             object: nil
         )
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(didWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
     }
 
     // MARK: - Observation
@@ -130,6 +137,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func didWake() {
+        model.beginRefreshing()
+    }
 
     @objc private func refresh() {
         model.beginRefreshing()

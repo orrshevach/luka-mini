@@ -8,6 +8,7 @@
 import SwiftUI
 import Dexcom
 import KeychainAccess
+import Network
 
 @MainActor @Observable class ViewModel {
     enum State {
@@ -31,6 +32,8 @@ import KeychainAccess
 
     private var client: DexcomClient?
     private let decoder = JSONDecoder()
+    private let networkMonitor = NWPathMonitor()
+    private var hasNetwork = false
 
     private var shouldRefreshReading: Bool {
         switch reading {
@@ -44,6 +47,22 @@ import KeychainAccess
     init() {
         decoder.dateDecodingStrategy = .iso8601
         setUpClientAndBeginRefreshing()
+        startNetworkMonitor()
+    }
+
+    private func startNetworkMonitor() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                let isSatisfied = path.status == .satisfied
+                let wasDisconnected = self?.hasNetwork == false
+                self?.hasNetwork = isSatisfied
+
+                if isSatisfied && wasDisconnected {
+                    self?.beginRefreshing()
+                }
+            }
+        }
+        networkMonitor.start(queue: .main)
     }
 
     func logIn(username: String, password: String, accountLocation: AccountLocation) {
