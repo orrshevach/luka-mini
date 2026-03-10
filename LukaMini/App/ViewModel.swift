@@ -57,6 +57,8 @@ import Network
                 let wasDisconnected = self?.hasNetwork == false
                 self?.hasNetwork = isSatisfied
 
+                self?.updateMessage()
+
                 if isSatisfied && wasDisconnected {
                     self?.beginRefreshing()
                 }
@@ -155,7 +157,7 @@ import Network
     private func updateMessage() {
         switch reading {
         case .initial:
-            message = "Loading..."
+            message = hasNetwork ? "Loading..." : "Offline"
         case .loaded(let reading):
             if reading.date.timeIntervalSinceNow > -60 {
                 message = "Just now"
