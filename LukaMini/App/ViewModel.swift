@@ -46,8 +46,8 @@ import Network
 
     init() {
         decoder.dateDecodingStrategy = .iso8601
-        setUpClientAndBeginRefreshing()
         startNetworkMonitor()
+        setUpClientAndBeginRefreshing()
     }
 
     private func startNetworkMonitor() {
@@ -83,7 +83,9 @@ import Network
                 accountLocation: accountLocation
             )
 
-            beginRefreshing()
+            if hasNetwork {
+                beginRefreshing()
+            }
         }
     }
 
