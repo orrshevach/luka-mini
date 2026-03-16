@@ -18,6 +18,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
 
+    private var graphRange: GraphRange {
+        get {
+            if let raw = UserDefaults.standard.string(forKey: .graphRangeKey),
+               let range = GraphRange(rawValue: raw) {
+                return range
+            }
+            return .threeHours
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: .graphRangeKey)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageLeading
@@ -93,7 +106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         let graphItem = NSMenuItem()
-        let hostingView = NSHostingView(rootView: MenuGraphView(model: model))
+        let hostingView = NSHostingView(rootView: MenuGraphView(model: model, range: graphRange))
         hostingView.frame.size = hostingView.fittingSize
         graphItem.view = hostingView
         menu.addItem(graphItem)
@@ -114,6 +127,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        let rangeItem = NSMenuItem(title: "Range", action: nil, keyEquivalent: "")
+        rangeItem.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+        let rangeMenu = NSMenu()
+        for range in GraphRange.allCases {
+            let item = NSMenuItem(
+                title: range.abbreviatedName,
+                action: #selector(selectGraphRange(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = range.rawValue
+            item.state = range == graphRange ? .on : .off
+            rangeMenu.addItem(item)
+        }
+        rangeItem.submenu = rangeMenu
+        menu.addItem(rangeItem)
 
         let loginToggle = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         loginToggle.target = self
@@ -169,6 +198,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func selectGraphRange(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let range = GraphRange(rawValue: rawValue) else { return }
+        graphRange = range
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -176,10 +211,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 struct MenuGraphView: View {
     var model: ViewModel
+    var range: GraphRange
 
     var body: some View {
         LineChart(
-            range: .threeHours,
+            range: range,
             style: .dots,
             readings: model.readings,
             lineWidth: 1.5,
