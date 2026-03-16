@@ -13,6 +13,7 @@ extension String {
     static let locationKey = "location"
     static let settingsWindow = "settings"
     static let useMMOLKey = "mmol"
+    static let graphRangeKey = "graphRange"
 }
 
 extension Double {

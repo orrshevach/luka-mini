@@ -100,7 +100,7 @@ import Network
 
                 do {
                     let allReadings = try await client.getGlucoseReadings(
-                        duration: .init(value: 3, unit: .hours)
+                        duration: .init(value: 24, unit: .hours)
                     ).sorted { $0.date < $1.date }
 
                     readings = allReadings.toLiveActivityReadings()
