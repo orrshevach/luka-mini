@@ -5,12 +5,133 @@
 //  Created by Kyle Bashour on 4/11/24.
 //
 
-import SwiftUI
 import Dexcom
-import KeychainAccess
+import Foundation
 import Network
+import SwiftUI
 
-@MainActor @Observable class ViewModel {
+@MainActor
+@Observable
+final class AppModel {
+    private let store: ProfileStore
+    private let networkMonitor = NWPathMonitor()
+    private let networkQueue = DispatchQueue(label: "com.kylebashour.LukaMini.network")
+
+    private(set) var profileModels: [GlucoseProfileModel] = []
+    private(set) var hasNetwork = false
+    @ObservationIgnored var profileModelsDidChange: (() -> Void)?
+
+    init(store: ProfileStore = ProfileStore()) {
+        self.store = store
+        syncProfileModels()
+        startNetworkMonitor()
+    }
+
+    var hasProfiles: Bool { !profileModels.isEmpty }
+
+    func model(for id: GlucoseProfile.ID) -> GlucoseProfileModel? {
+        profileModels.first { $0.id == id }
+    }
+
+    func credentials(for id: GlucoseProfile.ID) -> ProfileCredentials? {
+        store.credentials(for: id)
+    }
+
+    @discardableResult
+    func addProfile(
+        displayName: String,
+        username: String,
+        password: String,
+        accountLocation: AccountLocation,
+        showsInMenuBar: Bool
+    ) -> GlucoseProfile.ID {
+        let id = store.addProfile(
+            displayName: displayName,
+            username: username,
+            password: password,
+            accountLocation: accountLocation,
+            showsInMenuBar: showsInMenuBar
+        )
+        syncProfileModels()
+        model(for: id)?.beginRefreshing()
+        return id
+    }
+
+    func updateProfile(
+        id: GlucoseProfile.ID,
+        displayName: String,
+        username: String,
+        password: String,
+        accountLocation: AccountLocation,
+        showsInMenuBar: Bool
+    ) {
+        store.updateProfile(
+            id: id,
+            displayName: displayName,
+            username: username,
+            password: password,
+            accountLocation: accountLocation,
+            showsInMenuBar: showsInMenuBar
+        )
+        syncProfileModels()
+    }
+
+    func setShowsInMenuBar(id: GlucoseProfile.ID, showsInMenuBar: Bool) {
+        store.setShowsInMenuBar(id: id, showsInMenuBar: showsInMenuBar)
+        syncProfileModels()
+    }
+
+    func removeProfile(id: GlucoseProfile.ID) {
+        store.removeProfile(id: id)
+        syncProfileModels()
+    }
+
+    func refreshAll() {
+        for model in profileModels {
+            model.beginRefreshing()
+        }
+    }
+
+    private func syncProfileModels() {
+        let existing = Dictionary(uniqueKeysWithValues: profileModels.map { ($0.id, $0) })
+
+        profileModels = store.profiles.map { profile in
+            let credentials = store.credentials(for: profile.id)
+            if let model = existing[profile.id] {
+                model.update(profile: profile, credentials: credentials)
+                return model
+            } else {
+                return GlucoseProfileModel(profile: profile, credentials: credentials, hasNetwork: hasNetwork)
+            }
+        }
+
+        profileModelsDidChange?()
+    }
+
+    private func startNetworkMonitor() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let isSatisfied = path.status == .satisfied
+                let wasOffline = !self.hasNetwork
+                self.hasNetwork = isSatisfied
+
+                for model in self.profileModels {
+                    model.setNetworkStatus(isSatisfied)
+                }
+
+                if isSatisfied && wasOffline {
+                    self.refreshAll()
+                }
+            }
+        }
+        networkMonitor.start(queue: networkQueue)
+    }
+}
+
+@MainActor
+@Observable
+final class GlucoseProfileModel: Identifiable {
     enum State {
         case initial
         case loaded(GlucoseReading)
@@ -18,22 +139,119 @@ import Network
         case error(Error)
     }
 
-    var isLoggedIn: Bool {
-        username != nil && password != nil && location != nil
-    }
-
+    let id: GlucoseProfile.ID
+    private(set) var profile: GlucoseProfile
     private(set) var reading: State = .initial
     private(set) var message: String?
     private(set) var readings: [LiveActivityState.Reading] = []
 
-    @ObservationIgnored private(set) var username: String? = Keychain.standard[.usernameKey]
-    @ObservationIgnored private(set) var password: String? = Keychain.standard[.passwordKey]
-    @ObservationIgnored private(set) var location: String? = UserDefaults.standard.string(forKey: .locationKey)
+    @ObservationIgnored private var credentials: ProfileCredentials?
+    @ObservationIgnored private var client: DexcomClient?
+    @ObservationIgnored private var hasNetwork: Bool
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
-    private var client: DexcomClient?
-    private let decoder = JSONDecoder()
-    private let networkMonitor = NWPathMonitor()
-    private var hasNetwork = false
+    init(profile: GlucoseProfile, credentials: ProfileCredentials?, hasNetwork: Bool) {
+        self.id = profile.id
+        self.profile = profile
+        self.credentials = credentials
+        self.hasNetwork = hasNetwork
+        configureClient()
+        updateMessage()
+        beginRefreshing()
+    }
+
+    var isConfigured: Bool {
+        credentials?.isComplete == true
+    }
+
+    var displayName: String {
+        if !profile.displayName.isEmpty { return profile.displayName }
+        if let username = credentials?.username, !username.isEmpty { return username }
+        return "User"
+    }
+
+    func update(profile: GlucoseProfile, credentials: ProfileCredentials?) {
+        let credentialsChanged = credentials != self.credentials
+        let locationChanged = profile.accountLocation != self.profile.accountLocation
+
+        self.profile = profile
+        self.credentials = credentials
+
+        if credentialsChanged || locationChanged {
+            configureClient()
+            reading = .initial
+            readings = []
+        }
+
+        updateMessage()
+        beginRefreshing()
+    }
+
+    func setNetworkStatus(_ hasNetwork: Bool) {
+        self.hasNetwork = hasNetwork
+        updateMessage()
+    }
+
+    func beginRefreshing() {
+        refreshTask?.cancel()
+
+        guard profile.showsInMenuBar, isConfigured, hasNetwork, let client else {
+            refreshTask = nil
+            return
+        }
+
+        refreshTask = Task { [weak self] in
+            await self?.refreshLoop(client: client)
+        }
+    }
+
+    private func configureClient() {
+        if let credentials, credentials.isComplete {
+            client = DexcomClient(
+                username: credentials.username,
+                password: credentials.password,
+                accountLocation: profile.accountLocation
+            )
+        } else {
+            client = nil
+        }
+    }
+
+    private func refreshLoop(client: DexcomClient) async {
+        while !Task.isCancelled {
+            await fetchReadings(client: client)
+            updateMessage()
+
+            guard let delay = nextRefreshDelay() else { return }
+            do {
+                try await Task.sleep(for: .seconds(min(60, delay)))
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func fetchReadings(client: DexcomClient) async {
+        guard shouldRefreshReading else { return }
+
+        do {
+            let allReadings = try await client.getGlucoseReadings(
+                duration: .init(value: 24, unit: .hours)
+            ).sorted { $0.date < $1.date }
+
+            guard !Task.isCancelled else { return }
+            readings = allReadings.toLiveActivityReadings()
+
+            if let current = allReadings.last, current.date.timeIntervalSinceNow > -60 * 10 {
+                reading = .loaded(current)
+            } else {
+                reading = .noRecentReading
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            reading = .error(error)
+        }
+    }
 
     private var shouldRefreshReading: Bool {
         switch reading {
@@ -44,117 +262,26 @@ import Network
         }
     }
 
-    init() {
-        decoder.dateDecodingStrategy = .iso8601
-        startNetworkMonitor()
-        setUpClientAndBeginRefreshing()
-    }
-
-    private func startNetworkMonitor() {
-        networkMonitor.pathUpdateHandler = { [weak self] path in
-            DispatchQueue.main.async {
-                let isSatisfied = path.status == .satisfied
-                let wasDisconnected = self?.hasNetwork == false
-                self?.hasNetwork = isSatisfied
-
-                self?.updateMessage()
-
-                if isSatisfied && wasDisconnected {
-                    self?.beginRefreshing()
-                }
-            }
-        }
-        networkMonitor.start(queue: .main)
-    }
-
-    func logIn(username: String, password: String, accountLocation: AccountLocation) {
-        self.username = username
-        self.password = password
-        self.location = accountLocation.rawValue
-
-        setUpClientAndBeginRefreshing()
-    }
-
-    private func setUpClientAndBeginRefreshing() {
-        if let username, let password, let location, let accountLocation = AccountLocation(rawValue: location) {
-            reading = .initial
-
-            client = DexcomClient(
-                username: username,
-                password: password,
-                accountLocation: accountLocation
-            )
-
-            if hasNetwork {
-                beginRefreshing()
-            }
-        }
-    }
-
-    func beginRefreshing() {
-        guard let client else { return }
-
-        Task<Void, Never> {
-            if shouldRefreshReading {
-                print("Refreshing reading")
-
-                do {
-                    let allReadings = try await client.getGlucoseReadings(
-                        duration: .init(value: 24, unit: .hours)
-                    ).sorted { $0.date < $1.date }
-
-                    readings = allReadings.toLiveActivityReadings()
-
-                    if let current = allReadings.last, current.date.timeIntervalSinceNow > -60 * 10 {
-                        reading = .loaded(current)
-                    } else {
-                        reading = .noRecentReading
-                    }
-                } catch {
-                    reading = .error(error)
-                }
-            }
-
-            updateMessage()
-
-            let refreshTime: TimeInterval? = {
-                switch reading {
-                case .initial:
-                    return nil
-                case .loaded(let reading):
-                    // 5:05 after the last reading.
-                    let fiveMinuteRefresh = 60 * 5 + reading.date.timeIntervalSinceNow + 5
-                    // Refresh 5:05 after reading, then every 10s.
-                    return max(10, fiveMinuteRefresh)
-                case .noRecentReading:
-                    return 10
-                case .error(let error):
-                    if error is DexcomError {
-                        return nil
-                    } else {
-                        return 10
-                    }
-                }
-            }()
-
-            if let refreshTime {
-                // Refresh at least every 60s for the time stamp.
-                let refreshTime = min(60, refreshTime)
-
-                print("Scheduling refresh in \(refreshTime / 60) minutes")
-                
-                let timer = Timer.scheduledTimer(withTimeInterval: refreshTime, repeats: false) { [weak self] _ in
-                    DispatchQueue.main.async { [weak self] in
-                        self?.beginRefreshing()
-                    }
-                }
-
-                timer.tolerance = 5
-            }
+    private func nextRefreshDelay() -> TimeInterval? {
+        switch reading {
+        case .initial:
+            return nil
+        case .loaded(let reading):
+            // 5:05 after the last reading, then every 10s.
+            return max(10, 60 * 5 + reading.date.timeIntervalSinceNow + 5)
+        case .noRecentReading:
+            return 10
+        case .error(let error):
+            return error is DexcomError ? nil : 10
         }
     }
 
     private func updateMessage() {
+        guard isConfigured else {
+            message = "Not signed in"
+            return
+        }
+
         switch reading {
         case .initial:
             message = hasNetwork ? "Loading..." : "Offline"
@@ -167,11 +294,7 @@ import Network
         case .noRecentReading:
             message = "No recent glucose readings"
         case .error(let error):
-            if error is DexcomError {
-                message = "Try refreshing in 10 minutes"
-            } else {
-                message = "Unknown error"
-            }
+            message = error is DexcomError ? "Try refreshing in 10 minutes" : "Unknown error"
         }
     }
 }

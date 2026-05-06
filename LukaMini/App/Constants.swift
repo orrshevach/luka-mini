@@ -11,9 +11,10 @@ extension String {
     static let usernameKey = "username"
     static let passwordKey = "password"
     static let locationKey = "location"
-    static let settingsWindow = "settings"
     static let useMMOLKey = "mmol"
     static let graphRangeKey = "graphRange"
+    static let showNamesForMultipleUsersKey = "showNamesForMultipleUsers"
+    static let profilesKey = "profiles"
 }
 
 extension Double {

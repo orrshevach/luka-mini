@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum GraphRange: String, CaseIterable, Identifiable {
+enum GraphRange: String, CaseIterable, Codable, Identifiable {
     var id: Self { self }
 
     case oneHour
