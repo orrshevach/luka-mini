@@ -6,44 +6,27 @@
 //
 
 import AppKit
-import SwiftUI
 import Dexcom
-import KeychainAccess
+import SwiftUI
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    let model = ViewModel()
+    let appModel = AppModel()
     let loginHelper = LoginItemHelper()
 
-    private var statusItem: NSStatusItem!
+    private var statusItems: [NSStatusItem] = []
     private var settingsWindow: NSWindow?
 
-    private var graphRange: GraphRange {
-        get {
-            if let raw = UserDefaults.standard.string(forKey: .graphRangeKey),
-               let range = GraphRange(rawValue: raw) {
-                return range
-            }
-            return .threeHours
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: .graphRangeKey)
-        }
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.imagePosition = .imageLeading
+        appModel.profileModelsDidChange = { [weak self] in
+            self?.rebuildStatusItems()
+        }
+        rebuildStatusItems()
+        observeModel()
 
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
-
-        if !model.isLoggedIn {
+        if !appModel.hasProfiles {
             showSettings()
         }
-
-        observeModel()
 
         NotificationCenter.default.addObserver(
             self,
@@ -64,7 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func observeModel() {
         withObservationTracking {
-            updateStatusBarButton()
+            updateStatusBarButtons()
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.observeModel()
@@ -73,89 +56,171 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func defaultsDidChange() {
-        updateStatusBarButton()
+        updateStatusBarButtons()
     }
 
-    private func updateStatusBarButton() {
-        guard let button = statusItem.button else { return }
+    // MARK: - Status Items
 
-        let useMMOL = UserDefaults.standard.bool(forKey: .useMMOLKey)
+    private var visibleProfileModels: [GlucoseProfileModel] {
+        appModel.profileModels.filter { $0.profile.showsInMenuBar }
+    }
 
-        if model.isLoggedIn {
-            switch model.reading {
-            case .initial:
-                button.image = nil
-                button.title = "--"
-            case .loaded(let reading):
-                let value = reading.value.formatted(.glucose(useMMOL ? .mmolL : .mgdl))
-                button.image = reading.trend.nsImage
-                button.title = value
-            case .noRecentReading, .error:
-                button.image = NSImage(systemSymbolName: "icloud.slash", accessibilityDescription: "Error")
-                button.title = ""
-            }
+    private var graphRange: GraphRange {
+        UserDefaults.standard.string(forKey: .graphRangeKey)
+            .flatMap(GraphRange.init(rawValue:)) ?? .threeHours
+    }
+
+    private var showNamesForMultipleUsers: Bool {
+        UserDefaults.standard.object(forKey: .showNamesForMultipleUsersKey) as? Bool ?? true
+    }
+
+    private func rebuildStatusItems() {
+        for item in statusItems {
+            NSStatusBar.system.removeStatusItem(item)
+        }
+        statusItems.removeAll()
+
+        let visible = visibleProfileModels
+        if visible.isEmpty {
+            statusItems.append(makeStatusItem(profileID: nil))
         } else {
-            button.image = nil
-            button.title = "Luka"
+            for model in visible {
+                statusItems.append(makeStatusItem(profileID: model.id))
+            }
+        }
+
+        updateStatusBarButtons()
+    }
+
+    private func makeStatusItem(profileID: GlucoseProfile.ID?) -> NSStatusItem {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.imagePosition = .imageLeading
+        let menu = ProfileMenu(profileID: profileID)
+        menu.delegate = self
+        item.menu = menu
+        return item
+    }
+
+    private func updateStatusBarButtons() {
+        let visible = visibleProfileModels
+        let includeName = visible.count > 1 && showNamesForMultipleUsers
+
+        for item in statusItems {
+            guard let button = item.button else { continue }
+            let menu = item.menu as? ProfileMenu
+
+            if let id = menu?.profileID, let model = appModel.model(for: id) {
+                button.title = statusTitle(for: model, includeName: includeName)
+                button.image = statusImage(for: model)
+                button.toolTip = model.message.map { "\(model.displayName): \($0)" } ?? model.displayName
+            } else {
+                button.title = "Luka"
+                button.image = nil
+                button.toolTip = "Luka Mini"
+            }
+        }
+    }
+
+    private func statusTitle(for model: GlucoseProfileModel, includeName: Bool) -> String {
+        let useMMOL = UserDefaults.standard.bool(forKey: .useMMOLKey)
+        let value: String = switch model.reading {
+        case .initial: "--"
+        case .loaded(let reading): reading.value.formatted(.glucose(useMMOL ? .mmolL : .mgdl))
+        case .noRecentReading, .error: ""
+        }
+
+        if includeName {
+            return value.isEmpty ? model.displayName : "\(model.displayName) \(value)"
+        }
+        return value
+    }
+
+    private func statusImage(for model: GlucoseProfileModel) -> NSImage? {
+        if !model.isConfigured {
+            return NSImage(systemSymbolName: "person.crop.circle.badge.exclamationmark", accessibilityDescription: "Not Signed In")
+        }
+        switch model.reading {
+        case .initial:
+            return nil
+        case .loaded(let reading):
+            return reading.trend.nsImage
+        case .noRecentReading, .error:
+            return NSImage(systemSymbolName: "icloud.slash", accessibilityDescription: "Error")
         }
     }
 
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        guard let menu = menu as? ProfileMenu else { return }
         menu.removeAllItems()
 
+        if let id = menu.profileID, let model = appModel.model(for: id) {
+            buildProfileMenu(menu, for: model)
+        } else {
+            buildAppMenu(menu)
+        }
+
+        addGlobalMenuItems(to: menu)
+    }
+
+    private func buildAppMenu(_ menu: NSMenu) {
+        let title = appModel.hasProfiles ? "No users shown in menu bar" : "No users"
+        menu.addItem(disabledItem(title: title))
+        menu.addItem(.separator())
+        menu.addItem(settingsItem())
+    }
+
+    private func buildProfileMenu(_ menu: NSMenu, for model: GlucoseProfileModel) {
+        if visibleProfileModels.count > 1 {
+            menu.addItem(disabledItem(title: model.displayName))
+        }
+
         let graphItem = NSMenuItem()
-        let hostingView = NSHostingView(rootView: MenuGraphView(model: model, range: graphRange))
-        hostingView.frame.size = hostingView.fittingSize
-        graphItem.view = hostingView
+        let hosting = NSHostingView(rootView: MenuGraphView(model: model, range: graphRange))
+        hosting.frame.size = hosting.fittingSize
+        graphItem.view = hosting
         menu.addItem(graphItem)
         menu.addItem(.separator())
 
         if let message = model.message {
-            let messageItem = NSMenuItem(title: message, action: nil, keyEquivalent: "")
-            messageItem.isEnabled = false
-            menu.addItem(messageItem)
+            menu.addItem(disabledItem(title: message))
             menu.addItem(.separator())
         }
 
-        if model.isLoggedIn {
-            let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refresh), keyEquivalent: "")
+        if model.isConfigured {
+            let refreshItem = NSMenuItem(title: "Refresh Now", action: #selector(refresh(_:)), keyEquivalent: "")
             refreshItem.target = self
+            refreshItem.representedObject = model.id.uuidString
             refreshItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
             menu.addItem(refreshItem)
         }
 
-        menu.addItem(.separator())
         let rangeItem = NSMenuItem(title: "Range", action: nil, keyEquivalent: "")
         rangeItem.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
         let rangeMenu = NSMenu()
+        let selected = graphRange
         for range in GraphRange.allCases {
-            let item = NSMenuItem(
-                title: range.abbreviatedName,
-                action: #selector(selectGraphRange(_:)),
-                keyEquivalent: ""
-            )
+            let item = NSMenuItem(title: range.abbreviatedName, action: #selector(selectGraphRange(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = range.rawValue
-            item.state = range == graphRange ? .on : .off
+            item.state = range == selected ? .on : .off
             rangeMenu.addItem(item)
         }
         rangeItem.submenu = rangeMenu
         menu.addItem(rangeItem)
+
+        menu.addItem(settingsItem())
+    }
+
+    private func addGlobalMenuItems(to menu: NSMenu) {
+        menu.addItem(.separator())
 
         let loginToggle = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         loginToggle.target = self
         loginToggle.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
         loginToggle.state = loginHelper.isEnabled ? .on : .off
         menu.addItem(loginToggle)
-
-        let settingsTitle = model.isLoggedIn ? "Settings" : "Log In"
-        let settingsImageName = model.isLoggedIn ? "gear" : "person"
-        let settingsItem = NSMenuItem(title: settingsTitle, action: #selector(showSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        settingsItem.image = NSImage(systemSymbolName: settingsImageName, accessibilityDescription: nil)
-        menu.addItem(settingsItem)
 
         menu.addItem(.separator())
 
@@ -165,14 +230,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(quitItem)
     }
 
+    private func settingsItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ",")
+        item.target = self
+        item.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        return item
+    }
+
+    private func disabledItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
     // MARK: - Actions
 
     @objc private func didWake() {
-        model.beginRefreshing()
+        appModel.refreshAll()
     }
 
-    @objc private func refresh() {
-        model.beginRefreshing()
+    @objc private func refresh(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let id = UUID(uuidString: raw) else { return }
+        appModel.model(for: id)?.beginRefreshing()
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -181,27 +261,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            let view = SettingsView(didLogIn: model.logIn) { [weak self] in
-                self?.settingsWindow?.close()
-            }
+            let view = SettingsView(appModel: appModel, loginHelper: loginHelper)
             let controller = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: controller)
             window.title = "Luka Mini"
-            window.styleMask = [.titled, .closable]
+            window.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
+            window.titlebarSeparatorStyle = .none
+            window.toolbarStyle = .unified
+            window.isMovableByWindowBackground = true
             window.isReleasedWhenClosed = false
+            window.minSize = NSSize(width: 600, height: 340)
             settingsWindow = window
         }
 
-        settingsWindow?.level = .floating
         settingsWindow?.center()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func selectGraphRange(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let range = GraphRange(rawValue: rawValue) else { return }
-        graphRange = range
+        guard let raw = sender.representedObject as? String,
+              let range = GraphRange(rawValue: raw) else { return }
+        UserDefaults.standard.set(range.rawValue, forKey: .graphRangeKey)
     }
 
     @objc private func quit() {
@@ -209,8 +290,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+private final class ProfileMenu: NSMenu {
+    let profileID: GlucoseProfile.ID?
+
+    init(profileID: GlucoseProfile.ID?) {
+        self.profileID = profileID
+        super.init(title: "")
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 struct MenuGraphView: View {
-    var model: ViewModel
+    var model: GlucoseProfileModel
     var range: GraphRange
 
     var body: some View {
