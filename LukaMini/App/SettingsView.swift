@@ -23,6 +23,18 @@ struct SettingsView: View {
     @State private var isShowingDeleteAlert = false
 
     var body: some View {
+        Group {
+            if appModel.profileModels.isEmpty {
+                OnboardingView(appModel: appModel)
+                    .frame(minWidth: 460, idealWidth: 520, minHeight: 460, idealHeight: 500)
+            } else {
+                mainContent
+                    .frame(minWidth: 650, idealWidth: 650, minHeight: 450, idealHeight: 450)
+            }
+        }
+    }
+
+    private var mainContent: some View {
         NavigationSplitView {
             sidebar.navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
@@ -46,7 +58,6 @@ struct SettingsView: View {
         } message: {
             Text("This removes \(deleteAlertProfileName) from Luka Mini and deletes the saved Dexcom credentials for this user.")
         }
-        .frame(minWidth: 650, idealWidth: 650, minHeight: 450, idealHeight: 450)
     }
 
     // MARK: - Sidebar
@@ -62,7 +73,7 @@ struct SettingsView: View {
                     }
 
                     ForEach(appModel.profileModels) { model in
-                        ProfileListRow(model: model, useMMOL: useMMOL)
+                        ProfileListRow(model: model)
                             .tag(SettingsSelection.profile(model.id))
                     }
 
@@ -111,8 +122,6 @@ struct SettingsView: View {
     private var generalDetail: some View {
         Form {
             Section("Menu Bar") {
-                Toggle("Show names when multiple users are visible", isOn: $showNamesForMultipleUsers)
-
                 Picker("Graph range", selection: $graphRange) {
                     ForEach(GraphRange.allCases) { Text($0.abbreviatedName).tag($0) }
                 }
@@ -122,6 +131,10 @@ struct SettingsView: View {
                     Text("mmol/L").tag(true)
                 }
                 .pickerStyle(.segmented)
+
+                if appModel.profileModels.count > 1 {
+                    Toggle("Show names", isOn: $showNamesForMultipleUsers)
+                }
             }
 
             Section("App") {
@@ -151,10 +164,12 @@ struct SettingsView: View {
                 SecureField("Password", text: $editor.password)
                     .textFieldStyle(.roundedBorder)
 
-                Text("Sign in using this user’s Dexcom username and password. Dexcom Share must be enabled with at least one follower, but use this user’s own Dexcom credentials, not the follower’s. If the username is a phone number, format it with a + and country code, for example +12223334444.")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .foregroundStyle(.secondary)
-                    .font(.footnote)
+                if editor.id == nil {
+                    Text("Enter the Dexcom username and password of the person whose readings you want to see — not a follower’s. Their account must have Dexcom Share turned on with at least one follower. If the username is a phone number, include a country code (e.g. +12223334444).")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
             }
         }
         .formStyle(.grouped)
@@ -273,6 +288,148 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - Onboarding
+
+private struct OnboardingView: View {
+    var appModel: AppModel
+
+    @State private var accountLocation: AccountLocation = .usa
+    @State private var username: String = ""
+    @State private var password: String = ""
+    @State private var isSigningIn = false
+    @State private var errorMessage: String?
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case username, password }
+
+    private var canSignIn: Bool {
+        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !password.isEmpty
+            && !isSigningIn
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let icon = NSApp.applicationIconImage {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 72, height: 72)
+                    }
+                    Text("Welcome to Luka Mini")
+                        .font(.title2.weight(.semibold))
+                    Text("Sign in with Dexcom to show glucose readings in your menu bar.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Username", text: $username)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .username)
+                        .onSubmit { focusedField = .password }
+
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .password)
+                        .onSubmit { Task { await signIn() } }
+
+                    Picker("Region", selection: $accountLocation) {
+                        ForEach(AccountLocation.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden()
+                }
+
+                Text("Enter the Dexcom username and password of the person whose readings you want to see — not a follower’s. Their account must have Dexcom Share turned on with at least one follower. If the username is a phone number, include a country code (e.g. +12223334444).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(32)
+            .frame(maxWidth: 460)
+            .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            actionBar
+        }
+        .onAppear { focusedField = .username }
+    }
+
+    private var actionBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 12) {
+                if let errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.callout)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    Task { await signIn() }
+                } label: {
+                    if isSigningIn {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(minWidth: 80)
+                    } else {
+                        Text("Sign In").frame(minWidth: 80)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSignIn)
+            }
+            .padding()
+        }
+        .background(.bar)
+    }
+
+    @MainActor
+    private func signIn() async {
+        guard canSignIn else { return }
+        errorMessage = nil
+        isSigningIn = true
+        defer { isSigningIn = false }
+
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let client = DexcomClient(
+            username: trimmedUsername,
+            password: password,
+            accountLocation: accountLocation
+        )
+
+        do {
+            _ = try await client.getGlucoseReadings(duration: .init(value: 24, unit: .hours))
+        } catch let error as DexcomError {
+            switch error.code {
+            case .accountPasswordInvalid, .authenticateMaxAttemptsExceeed:
+                errorMessage = "Incorrect username or password."
+            case .invalidArgument:
+                errorMessage = "That username doesn’t look right. If it’s a phone number, format it like +12223334444."
+            case .sessionIdNotFound, .sessionNotValid, .none:
+                errorMessage = error.message ?? "Dexcom rejected the sign-in. Double-check your credentials and region."
+            }
+            return
+        } catch {
+            errorMessage = "Couldn’t reach Dexcom. Check your internet connection and try again."
+            return
+        }
+
+        appModel.addProfile(
+            displayName: "",
+            username: trimmedUsername,
+            password: password,
+            accountLocation: accountLocation,
+            showsInMenuBar: true
+        )
+    }
+}
+
 // MARK: - Selection
 
 private enum SettingsSelection: Hashable {
@@ -329,31 +486,12 @@ private struct ProfileEditorState: Equatable {
 
 private struct ProfileListRow: View {
     var model: GlucoseProfileModel
-    var useMMOL: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.displayName)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-
-                Text(model.profile.showsInMenuBar ? model.message ?? "Not signed in" : "Hidden")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 6)
-
-            if model.profile.showsInMenuBar, case .loaded(let reading) = model.reading {
-                Text(reading.value.formatted(.glucose(useMMOL ? .mmolL : .mgdl)))
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .frame(minWidth: 52, alignment: .trailing)
-            }
-        }
-        .padding(.vertical, 4)
+        Text(model.displayName)
+            .fontWeight(.medium)
+            .lineLimit(1)
+            .padding(.vertical, 4)
     }
 }
 

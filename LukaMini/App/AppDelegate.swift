@@ -25,7 +25,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         observeModel()
 
         if !appModel.hasProfiles {
-            showSettings()
+            DispatchQueue.main.async { [weak self] in
+                self?.showSettings()
+            }
         }
 
         NotificationCenter.default.addObserver(
@@ -275,8 +277,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         settingsWindow?.center()
-        settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        settingsWindow?.orderFrontRegardless()
     }
 
     @objc private func selectGraphRange(_ sender: NSMenuItem) {
