@@ -146,9 +146,11 @@ final class GlucoseProfileModel: Identifiable {
     private(set) var readings: [LiveActivityState.Reading] = []
 
     @ObservationIgnored private var credentials: ProfileCredentials?
-    @ObservationIgnored private var client: DexcomClient?
+    @ObservationIgnored private var client: RemoteOrDirectClient?
     @ObservationIgnored private var hasNetwork: Bool
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var rateLimitRetryCount = 0
+    @ObservationIgnored private var rateLimitedUntil: Date?
 
     init(profile: GlucoseProfile, credentials: ProfileCredentials?, hasNetwork: Bool) {
         self.id = profile.id
@@ -207,7 +209,7 @@ final class GlucoseProfileModel: Identifiable {
 
     private func configureClient() {
         if let credentials, credentials.isComplete {
-            client = DexcomClient(
+            client = RemoteOrDirectClient(
                 username: credentials.username,
                 password: credentials.password,
                 accountLocation: profile.accountLocation
@@ -217,7 +219,7 @@ final class GlucoseProfileModel: Identifiable {
         }
     }
 
-    private func refreshLoop(client: DexcomClient) async {
+    private func refreshLoop(client: RemoteOrDirectClient) async {
         while !Task.isCancelled {
             await fetchReadings(client: client)
             updateMessage()
@@ -231,7 +233,7 @@ final class GlucoseProfileModel: Identifiable {
         }
     }
 
-    private func fetchReadings(client: DexcomClient) async {
+    private func fetchReadings(client: RemoteOrDirectClient) async {
         guard shouldRefreshReading else { return }
 
         do {
@@ -241,6 +243,8 @@ final class GlucoseProfileModel: Identifiable {
 
             guard !Task.isCancelled else { return }
             readings = allReadings.toLiveActivityReadings()
+            rateLimitRetryCount = 0
+            rateLimitedUntil = nil
 
             if let current = allReadings.last, current.date.timeIntervalSinceNow > -60 * 10 {
                 reading = .loaded(current)
@@ -249,11 +253,23 @@ final class GlucoseProfileModel: Identifiable {
             }
         } catch {
             guard !Task.isCancelled else { return }
+            if (error as? DexcomDecodingError)?.statusCode == 429 {
+                rateLimitRetryCount += 1
+                rateLimitedUntil = .now.addingTimeInterval(
+                    Self.rateLimitBackoff(retryCount: rateLimitRetryCount)
+                )
+            } else {
+                rateLimitRetryCount = 0
+                rateLimitedUntil = nil
+            }
             reading = .error(error)
         }
     }
 
     private var shouldRefreshReading: Bool {
+        if let rateLimitedUntil, rateLimitedUntil > .now {
+            return false
+        }
         switch reading {
         case .initial, .error, .noRecentReading:
             return true
@@ -272,8 +288,21 @@ final class GlucoseProfileModel: Identifiable {
         case .noRecentReading:
             return 10
         case .error(let error):
+            if let rateLimitedUntil {
+                return max(1, rateLimitedUntil.timeIntervalSinceNow)
+            }
             return error is DexcomError ? nil : 10
         }
+    }
+
+    /// Exponential backoff for HTTP 429 from Dexcom. Rate limits are per-account
+    /// and the window often outlasts a short wait, so escalate aggressively.
+    /// 120s → 240s → 480s → 600s (capped), with ±30s jitter.
+    private static func rateLimitBackoff(retryCount: Int) -> TimeInterval {
+        let base: TimeInterval = 120
+        let cap: TimeInterval = 600
+        let scaled = base * pow(2, Double(min(retryCount, 4)))
+        return min(scaled, cap) + TimeInterval.random(in: -30...30)
     }
 
     private func updateMessage() {
@@ -294,7 +323,13 @@ final class GlucoseProfileModel: Identifiable {
         case .noRecentReading:
             message = "No recent glucose readings"
         case .error(let error):
-            message = error is DexcomError ? "Try refreshing in 10 minutes" : "Unknown error"
+            if (error as? DexcomDecodingError)?.statusCode == 429 {
+                message = "Rate limited, retrying soon"
+            } else if error is DexcomError {
+                message = "Try refreshing in 10 minutes"
+            } else {
+                message = "Unknown error"
+            }
         }
     }
 }
