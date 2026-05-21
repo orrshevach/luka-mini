@@ -146,7 +146,7 @@ final class GlucoseProfileModel: Identifiable {
     private(set) var readings: [LiveActivityState.Reading] = []
 
     @ObservationIgnored private var credentials: ProfileCredentials?
-    @ObservationIgnored private var client: RemoteOrDirectClient?
+    @ObservationIgnored private var client: DexcomClient?
     @ObservationIgnored private var hasNetwork: Bool
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var rateLimitRetryCount = 0
@@ -209,7 +209,7 @@ final class GlucoseProfileModel: Identifiable {
 
     private func configureClient() {
         if let credentials, credentials.isComplete {
-            client = RemoteOrDirectClient(
+            client = DexcomClient(
                 username: credentials.username,
                 password: credentials.password,
                 accountLocation: profile.accountLocation
@@ -219,7 +219,7 @@ final class GlucoseProfileModel: Identifiable {
         }
     }
 
-    private func refreshLoop(client: RemoteOrDirectClient) async {
+    private func refreshLoop(client: DexcomClient) async {
         while !Task.isCancelled {
             await fetchReadings(client: client)
             updateMessage()
@@ -233,7 +233,7 @@ final class GlucoseProfileModel: Identifiable {
         }
     }
 
-    private func fetchReadings(client: RemoteOrDirectClient) async {
+    private func fetchReadings(client: DexcomClient) async {
         guard shouldRefreshReading else { return }
 
         do {
