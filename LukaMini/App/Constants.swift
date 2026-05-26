@@ -14,6 +14,7 @@ extension String {
     static let useMMOLKey = "mmol"
     static let graphRangeKey = "graphRange"
     static let showNamesForMultipleUsersKey = "showNamesForMultipleUsers"
+    static let useServerForReadingsKey = "useServerForReadings"
     static let profilesKey = "profiles"
 }
 
