@@ -143,10 +143,9 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Use server for readings", isOn: $useServerForReadings)
+                Toggle("Fetch from Luka servers", isOn: $useServerForReadings)
             } footer: {
                 Text("Fetch readings from the Luka server, which caches them while the Luka iOS app runs a Live Activity. This reduces direct requests to Dexcom. Falls back to Dexcom automatically when no cached readings are available.")
-                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(.secondary)
                     .font(.footnote)
             }
