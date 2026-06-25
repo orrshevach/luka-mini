@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import CoreText
 import Dexcom
 import SwiftUI
 
@@ -112,7 +113,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let menu = item.menu as? ProfileMenu
 
             if let id = menu?.profileID, let model = appModel.model(for: id) {
-                button.title = statusTitle(for: model, includeName: includeName)
+                // Use small caps so out-of-range readings ("Low"/"Hi" from the
+                // formatter) render typographically; digits are unaffected.
+                button.attributedTitle = smallCapsTitle(
+                    statusTitle(for: model, includeName: includeName),
+                    font: button.font
+                )
                 button.image = statusImage(for: model)
                 button.toolTip = model.message.map { "\(model.displayName): \($0)" } ?? model.displayName
             } else {
@@ -135,6 +141,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return value.isEmpty ? model.displayName : "\(model.displayName) \(value)"
         }
         return value
+    }
+
+    /// Builds a status-bar title that renders lowercase letters as small caps,
+    /// matching SwiftUI's `.lowercaseSmallCaps()`. This keeps "Low"/"Hi"
+    /// out-of-range labels looking intentional while leaving digits unchanged.
+    private func smallCapsTitle(_ string: String, font: NSFont?) -> NSAttributedString {
+        let baseFont = font ?? .menuBarFont(ofSize: 0)
+        let descriptor = baseFont.fontDescriptor.addingAttributes([
+            .featureSettings: [
+                [
+                    NSFontDescriptor.FeatureKey.typeIdentifier: kLowerCaseType,
+                    NSFontDescriptor.FeatureKey.selectorIdentifier: kLowerCaseSmallCapsSelector,
+                ],
+            ],
+        ])
+        let smallCapsFont = NSFont(descriptor: descriptor, size: baseFont.pointSize) ?? baseFont
+        return NSAttributedString(string: string, attributes: [.font: smallCapsFont])
     }
 
     private func statusImage(for model: GlucoseProfileModel) -> NSImage? {

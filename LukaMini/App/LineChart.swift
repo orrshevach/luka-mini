@@ -185,6 +185,7 @@ struct LineChart: View {
                         format: GlucoseFormatter(unit: unit),
                         collisionResolution: .greedy(priority: 50)
                     )
+                    .font(.caption.lowercaseSmallCaps())
                 }
 
                 let boundaryMarks = [yScaleRange.lowerBound, yScaleRange.upperBound]
@@ -194,6 +195,7 @@ struct LineChart: View {
                         format: GlucoseFormatter(unit: unit),
                         collisionResolution: .greedy(priority: 50)
                     )
+                    .font(.caption.lowercaseSmallCaps())
                 }
 
                 if yScaleRange.contains(55) {
@@ -204,6 +206,7 @@ struct LineChart: View {
                             format: GlucoseFormatter(unit: unit),
                             collisionResolution: .greedy(priority: 100)
                         )
+                        .font(.caption.lowercaseSmallCaps())
                     }
                 }
             }
