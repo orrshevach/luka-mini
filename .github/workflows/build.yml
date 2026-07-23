@@ -15,12 +15,15 @@ jobs:
       - name: Resolve Swift package dependencies
         run: xcodebuild -resolvePackageDependencies -project LukaMini.xcodeproj
 
+      - name: List available schemes
+        run: xcodebuild -list -project LukaMini.xcodeproj
+
       - name: Build (ad-hoc signed)
         run: |
           set -o pipefail
           xcodebuild \
             -project LukaMini.xcodeproj \
-            -target "Luka Mini" \
+            -scheme "Luka Mini" \
             -configuration Release \
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="-" \
