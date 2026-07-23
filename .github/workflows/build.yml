@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26   # Xcode 26+ required to compile the .icon (Icon Composer) app icon
     steps:
       - uses: actions/checkout@v4
 
