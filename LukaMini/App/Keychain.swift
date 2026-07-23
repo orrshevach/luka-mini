@@ -10,6 +10,9 @@ import KeychainAccess
 
 extension Keychain {
     static var standard: Keychain {
-        Keychain().synchronizable(true)
+        // Local login keychain (no iCloud sync). The synchronizable/data-protection
+        // keychain requires a real Apple team + keychain entitlement, which an ad-hoc
+        // (App Store-less) local build doesn't have, so saves would silently fail.
+        Keychain()
     }
 }
