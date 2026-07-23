@@ -1,0 +1,44 @@
+name: Build LukaMini
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve Swift package dependencies
+        run: xcodebuild -resolvePackageDependencies -project LukaMini.xcodeproj
+
+      - name: Build (ad-hoc signed)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project LukaMini.xcodeproj \
+            -target "Luka Mini" \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            clean build
+
+      - name: Locate, verify, and package the app
+        run: |
+          APP=$(find build/Build/Products/Release -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP" ]; then echo "No .app produced"; exit 1; fi
+          echo "Built: $APP"
+          codesign -dv "$APP" || true
+          ditto -c -k --keepParent "$APP" "LukaMini.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LukaMini
+          path: LukaMini.zip
+          if-no-files-found: error
